@@ -1,6 +1,5 @@
 /* eslint-env browser */
-/* global Go fs drand */
-import './wasm/wasm_exec.js'
+import init, { verify_beacon } from './pkg/drand_verify.js'
 
 class Verifier {
   static instance () {
@@ -9,23 +8,19 @@ class Verifier {
     }
     Verifier._instance = (async function () {
       try {
-        // TODO: switch to TinyGo when math/big works for smaller wasm file and non-global exports.
-        const go = new Go()
-        const url = `${import.meta.url.split('/').slice(0, -1).join('/')}/wasm/drand.wasm`
-        let result
-        if (typeof fs !== 'undefined' && fs.promises) { // wasm_exec puts fs on global object in Node.js
-          const dirname = new URL(import.meta.url).pathname.split('/').slice(0, -1).join('/')
-          const data = new Uint8Array(await fs.promises.readFile(`${dirname}/wasm/drand.wasm`))
-          result = await WebAssembly.instantiate(data, go.importObject)
-        } else if (WebAssembly.instantiateStreaming) {
-          result = await WebAssembly.instantiateStreaming(fetch(url), go.importObject)
+        // Note: in Webpack >= v5.0.0-beta.30 the form `new URL("./relative_path.xyz", import.meta.url)`
+        // is treated as dependency and creates an asset module. This allows us to create a package that
+        // works in node, browsers and Webpack.
+        const url = new URL("./pkg/drand_verify_bg.wasm", import.meta.url)
+        if (url.protocol === "file:") {
+          // node-fetch does not like file:// URLs
+          const fs = await import("fs");
+          const data = await fs.promises.readFile(url)
+          await init(data)
         } else {
-          const res = await fetch(url)
-          if (!res.ok) throw new Error(`unexpected HTTP status fetching WASM ${res.status}`)
-          result = await WebAssembly.instantiate(await res.arrayBuffer(), go.importObject)
+          console.log(url)
+          await init(url)
         }
-        go.run(result.instance)
-        return drand // window.drand / global.drand should now be available
       } catch (err) {
         Verifier._instance = null
         throw err
@@ -65,9 +60,16 @@ export default class Verifying {
 
   async _verify (rand, options) {
     // TODO: full/partial chain verification
+    const start = Date.now()
     const info = await this.info(options)
+    const afterInfo = Date.now()
     const verifier = await Verifier.instance()
-    await verifier.verifyBeacon(info.public_key, rand)
+    const afterInstantiation = Date.now()
+    //await verifier.verifyBeacon(info.public_key, rand)
+    const ok = verify_beacon(info.public_key, rand.round, rand.previous_signature, rand.signature)
+    if (!ok) throw new Error("Verification failed")
+    const end = Date.now()
+    console.log(`Verification time: ${end-start}ms (${afterInfo-start}ms info; ${afterInstantiation-afterInfo}ms instantiation; ${end-afterInstantiation}ms verify beacon)`)
     // TODO: derive the randomness from the signature
     return { ...rand }
   }
