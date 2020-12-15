@@ -11,11 +11,13 @@ class Verifier {
       try {
         // TODO: switch to TinyGo when math/big works for smaller wasm file and non-global exports.
         const go = new Go()
-        const url = `${import.meta.url.split('/').slice(0, -1).join('/')}/wasm/drand.wasm`
+        // Note: in Webpack >= v5.0.0-beta.30 the form `new URL("./relative_path.xyz", import.meta.url)`
+        // is treated as dependency and creates an asset module. This allows us to create a package that
+        // works in node, browsers and Webpack.
+        const url = new URL("./wasm/drand.wasm", import.meta.url)
         let result
         if (typeof fs !== 'undefined' && fs.promises) { // wasm_exec puts fs on global object in Node.js
-          const dirname = new URL(import.meta.url).pathname.split('/').slice(0, -1).join('/')
-          const data = new Uint8Array(await fs.promises.readFile(`${dirname}/wasm/drand.wasm`))
+          const data = new Uint8Array(await fs.promises.readFile(url))
           result = await WebAssembly.instantiate(data, go.importObject)
         } else if (WebAssembly.instantiateStreaming) {
           result = await WebAssembly.instantiateStreaming(fetch(url), go.importObject)
